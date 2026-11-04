@@ -167,3 +167,5 @@ cython_debug/
 container_cache/*
 ollama
 chroma
+# SQLite database of the chatbot (local development)
+Session_5/chatbot_task/app/db/
