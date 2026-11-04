@@ -13,7 +13,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import requests
 import re
-from uuid import uuid4
+from uuid import uuid5, NAMESPACE_URL
 from typing import List
 import logging
 import os
@@ -25,6 +25,10 @@ EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "bge-m3")
 MODEL_NAME = os.environ.get("MODEL_NAME", "llama3.2:1b")
 PDF_DOC_PATH = os.environ.get("PDF_DOC_PATH", "src/AI_Book.pdf")
 COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "ai_model_book")
+# Same chunking as in Session 3, so the collection built in the notebook and the one built here are identical
+CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "1000"))
+CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "100"))
+INDEX_BATCH_SIZE = 100
 
 logging.basicConfig(
     level=logging.INFO,  # Change to DEBUG for more details
@@ -52,10 +56,10 @@ class CustomChatBot:
         and the ChatOllama language model for answer generation.
         """
 
-        # Initialize the embedding function for document retrieval
+        # Make sure the embedding model and the LLM are available in ollama (pulling is idempotent)
         if pull_embedding_model:
-            logger.info(f"Pulling embedding model{EMBEDDING_MODEL} now.")
-            self._pull_embedding_model()
+            for model in (EMBEDDING_MODEL, MODEL_NAME):
+                self._pull_model(model)
 
         # Task: initialize the embedding model
         self.embedding_function = OllamaEmbeddings(model=EMBEDDING_MODEL, base_url=f"http://{OLLAMA_HOST_NAME}:11434")
@@ -66,10 +70,18 @@ class CustomChatBot:
         # Get or create the document collection in ChromaDB
         self.vector_db = self._initialize_vector_db()
 
-        # Process pdf, embedd data and index to ChromaDB
+        # Process pdf, embedd data and index to ChromaDB.
+        # INDEX_DATA=1 rebuilds the collection from scratch, an empty collection (fresh setup) is filled automatically.
         if index_data:
-            logger.info(f"Index data to chroma db now.")
+            logger.info("INDEX_DATA=1: rebuild the chroma collection now.")
+            self.client.delete_collection(COLLECTION_NAME)
+            self.vector_db = self._initialize_vector_db()
             self._index_data_to_vector_db()
+        elif self.document_count() == 0:
+            logger.info("Chroma collection is empty: index data to chroma db now.")
+            self._index_data_to_vector_db()
+        else:
+            logger.info(f"Chroma collection already contains {self.document_count()} chunks, skip indexing.")
 
         # Task: Initialize the document retriever
         self.retriever = self.vector_db.as_retriever(search_kwargs={"k": 3})
@@ -80,15 +92,16 @@ class CustomChatBot:
         # Set up the retrieval-augmented generation (RAG) pipeline
         self.qa_rag_chain = self._initialize_qa_rag_chain()
 
-    def _pull_embedding_model(self):
-        logger.info(f"Pull embedding model {EMBEDDING_MODEL}")
-        try:
+    def _pull_model(self, model: str):
+        """Download a model into the ollama container. Does nothing if the model is already there."""
+        logger.info(f"Pull model {model} (this can take a while on the first start)")
+        response = requests.post(f"http://{OLLAMA_HOST_NAME}:11434/api/pull", json={"name": model, "stream": False})
+        response.raise_for_status()
+        logger.info(f"{model}: {response.json()}")
 
-            response = requests.post(f"http://{OLLAMA_HOST_NAME}:11434/api/pull", json = {"name": EMBEDDING_MODEL,  "stream": False})
-            response.raise_for_status()
-            logger.info(response.json())
-        except:
-            raise
+    def document_count(self) -> int:
+        """Number of chunks stored in the chroma collection."""
+        return self.client.get_or_create_collection(COLLECTION_NAME).count()
 
     def _initialize_chroma_client(self) -> ClientAPI:
         """
@@ -135,7 +148,7 @@ class CustomChatBot:
         loader = PyPDFLoader(pdf_doc)
 
         # Load and split documents in chunks
-        splitter = RecursiveCharacterTextSplitter()
+        splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
         pages_chunked = splitter.split_documents(loader.load())
 
         # Function to clean text by removing invalid unicode characters, including surrogate pairs
@@ -151,11 +164,20 @@ class CustomChatBot:
             for doc in pages_chunked
         ]
 
-        uuids = [str(uuid4()) for _ in range(len(pages_chunked_cleaned[0:100]))]
+        # Remove empty chunks (e.g. pages that only contain images)
+        pages_chunked_cleaned = [doc for doc in pages_chunked_cleaned if doc.page_content.strip()]
 
-        self.vector_db.add_documents(documents=pages_chunked_cleaned[0:100], ids=uuids)
+        # Deterministic ids: indexing the same book twice overwrites the chunks instead of adding duplicates
+        doc_name = os.path.basename(pdf_doc)
+        ids = [str(uuid5(NAMESPACE_URL, f"{doc_name}:{i}")) for i in range(len(pages_chunked_cleaned))]
 
-        logger.info(f"Finished building vector database with {self.client.get_collection(COLLECTION_NAME).count()}")
+        # Index the whole book in batches, so the progress is visible in the log
+        for start in range(0, len(pages_chunked_cleaned), INDEX_BATCH_SIZE):
+            end = start + INDEX_BATCH_SIZE
+            self.vector_db.add_documents(documents=pages_chunked_cleaned[start:end], ids=ids[start:end])
+            logger.info(f"Indexed {min(end, len(pages_chunked_cleaned))}/{len(pages_chunked_cleaned)} chunks")
+
+        logger.info(f"Finished building vector database with {self.document_count()} chunks")
 
     def _initialize_qa_rag_chain(self) -> Runnable:
         """
