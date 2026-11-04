@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Architecture Inception Canvas – ChatDoc</title>
+<style>
+  @page { size: A3 landscape; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    width: 420mm; height: 297mm;
+    background: #e8edf0; color: #2F5B7C;
+    font-family: "Helvetica Neue", Arial, sans-serif; font-size: 9.3pt; line-height: 1.3;
+    padding: 9mm 10mm 6mm;
+    display: flex; flex-direction: column; gap: 3mm;
+  }
+  header { display: flex; align-items: flex-end; gap: 4mm; }
+  header h1 { font-size: 21pt; margin: 0; flex: 1; white-space: nowrap; }
+  .meta { background: #fff; padding: 1.5mm 3mm; height: 13mm; }
+  .meta small { display: block; font-size: 8pt; opacity: .75; }
+  .meta b { font-size: 10pt; color: #1d3c52; }
+  .box { background: #fff; padding: 3mm 4.5mm; overflow: hidden; }
+  .box h2 { margin: 0 0 .5mm; font-size: 12.5pt; }
+  .box .hint { font-style: italic; font-size: 7.5pt; opacity: .7; margin: 0 0 1.5mm; }
+  .box ul { margin: 0; padding-left: 4.5mm; color: #1d3c52; }
+  .box li { margin-bottom: .8mm; }
+  .box p { color: #1d3c52; margin: 0 0 1.5mm; }
+  .grid {
+    flex: 1; display: grid; gap: 3mm;
+    grid-template-columns: 1fr 2fr 1fr;
+    grid-template-rows: auto 1fr 1fr; min-height: 0;
+    grid-template-areas:
+      "case case case"
+      "func ctx  org"
+      "qual ctx  tech";
+  }
+  .case { grid-area: case; } .func { grid-area: func; } .ctx { grid-area: ctx; }
+  .org { grid-area: org; } .qual { grid-area: qual; } .tech { grid-area: tech; }
+  .hyp { grid-area: hyp; } .risk { grid-area: risk; }
+  .bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+  .qgoal { display: flex; gap: 2mm; margin-bottom: 1.6mm; color: #1d3c52; }
+  .qgoal span.n { flex: 0 0 6mm; height: 6mm; border-radius: 50%; background: #2F5B7C; color: #fff; display: grid; place-items: center; font-weight: bold; font-size: 9pt; }
+  svg text { font-family: "Helvetica Neue", Arial, sans-serif; }
+  footer { font-size: 7.5pt; display: flex; justify-content: space-between; opacity: .8; }
+  .cols2 { columns: 2; column-gap: 6mm; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Architecture Inception Canvas</h1>
+  <div class="meta"><small>System:</small><b>ChatDoc – RAG-Chatbot zum Lehrbuch</b></div>
+  <div class="meta"><small>Created by:</small><b>Nico (Team ChabtotG-M)</b></div>
+  <div class="meta"><small>Created for:</small><b>Labor „Build your own Chatbot“, HS Esslingen</b></div>
+  <div class="meta"><small>Date / Iteration:</small><b>04.11.2026 / Iteration 2</b></div>
+</header>
+
+<div class="grid">
+  <section class="box case">
+    <h2>Business Case</h2>
+    <p class="hint">Brief description of the business case or economic driver behind the software system.</p>
+    <p>Studierende verlieren beim Lernen viel Zeit mit der Suche im 500-seitigen KI-Lehrbuch, und allgemeine Cloud-Chatbots erfinden Antworten, die nicht zum Vorlesungsstoff passen. <b>ChatDoc</b> beantwortet Fragen <b>ausschließlich auf Basis des Lehrbuchs</b> (Retrieval-Augmented Generation), zeigt die <b>Quellen mit Seitenzahl</b> und läuft <b>komplett lokal</b> auf einem Jetson Orin Nano – ohne Lizenzkosten und ohne dass Daten die Hochschule verlassen. Ziel: kürzere Suchzeit beim Lernen, verlässliche Antworten für die Prüfungsvorbereitung und messbares Feedback für die Lehrenden.</p>
+  </section>
+
+  <section class="box func">
+    <h2>Functional Overview</h2>
+    <p class="hint">The most important functional requirements at a high level.</p>
+    <ul>
+      <li>Fragen zum Lehrbuch im Browser stellen, Antwort wird gestreamt (US-01, US-02)</li>
+      <li>Quellen (Chunks mit Seitenzahl) unter jeder Antwort (US-03)</li>
+      <li>Chatverlauf dauerhaft in SQL-Datenbank, Chats anlegen/öffnen/löschen (US-04, US-05)</li>
+      <li>Folgefragen mit Gesprächskontext (US-06)</li>
+      <li>Antworten mit 👍/👎 bewerten, Feedback-Statistik (US-07, US-08)</li>
+      <li>Komplettes Buch automatisch indexiert, Start per <code>docker compose up</code> (US-09, US-10)</li>
+      <li>LLM per Umgebungsvariable wechselbar (US-11)</li>
+    </ul>
+  </section>
+
+  <section class="box ctx">
+    <h2>Business Context</h2>
+    <p class="hint">Separate your system under construction as a black box from all its communication partners.</p>
+    <svg viewBox="0 0 760 420" width="100%" height="88%" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2F5B7C"/></marker>
+      </defs>
+      <!-- users -->
+      <g font-size="13" fill="#1d3c52">
+        <g transform="translate(20,20)"><rect width="170" height="62" rx="8" fill="#dbe7ef" stroke="#2F5B7C"/><text x="85" y="26" text-anchor="middle" font-weight="bold">Studierende</text><text x="85" y="45" text-anchor="middle" font-size="11">P1 Lena, P2 Jonas</text></g>
+        <g transform="translate(20,178)"><rect width="170" height="62" rx="8" fill="#dbe7ef" stroke="#2F5B7C"/><text x="85" y="26" text-anchor="middle" font-weight="bold">Dozentin</text><text x="85" y="45" text-anchor="middle" font-size="11">P3 Prof. Weber</text></g>
+        <g transform="translate(20,336)"><rect width="170" height="62" rx="8" fill="#dbe7ef" stroke="#2F5B7C"/><text x="85" y="26" text-anchor="middle" font-weight="bold">Laboringenieur</text><text x="85" y="45" text-anchor="middle" font-size="11">P4 Tim</text></g>
+      </g>
+      <!-- system black box -->
+      <g transform="translate(290,120)">
+        <rect width="200" height="180" rx="10" fill="#2F5B7C"/>
+        <text x="100" y="62" text-anchor="middle" fill="#fff" font-size="20" font-weight="bold">ChatDoc</text>
+        <text x="100" y="88" text-anchor="middle" fill="#fff" font-size="12">Streamlit-App + LangChain</text>
+        <text x="100" y="106" text-anchor="middle" fill="#fff" font-size="12">(Docker-Container)</text>
+        <text x="100" y="140" text-anchor="middle" fill="#cfe0ea" font-size="11">Jetson Orin Nano / PC</text>
+      </g>
+      <!-- external systems -->
+      <g font-size="13" fill="#1d3c52">
+        <g transform="translate(580,10)"><rect width="170" height="70" rx="8" fill="#fff" stroke="#2F5B7C" stroke-dasharray="5 3"/><text x="85" y="28" text-anchor="middle" font-weight="bold">Ollama</text><text x="85" y="47" text-anchor="middle" font-size="11">llama3.2:1b, bge-m3</text></g>
+        <g transform="translate(580,118)"><rect width="170" height="70" rx="8" fill="#fff" stroke="#2F5B7C" stroke-dasharray="5 3"/><text x="85" y="28" text-anchor="middle" font-weight="bold">ChromaDB</text><text x="85" y="47" text-anchor="middle" font-size="11">Vektordatenbank</text></g>
+        <g transform="translate(580,226)"><rect width="170" height="70" rx="8" fill="#fff" stroke="#2F5B7C" stroke-dasharray="5 3"/><text x="85" y="28" text-anchor="middle" font-weight="bold">SQLite</text><text x="85" y="47" text-anchor="middle" font-size="11">Chats, Nachrichten, Feedback</text></g>
+        <g transform="translate(580,334)"><rect width="170" height="70" rx="8" fill="#fff" stroke="#2F5B7C" stroke-dasharray="5 3"/><text x="85" y="28" text-anchor="middle" font-weight="bold">AI_Book.pdf</text><text x="85" y="47" text-anchor="middle" font-size="11">Wissensquelle</text></g>
+      </g>
+      <!-- arrows -->
+      <g stroke="#2F5B7C" stroke-width="1.6" fill="none" marker-end="url(#a)" font-size="11">
+        <path d="M190,51 L290,160"/><path d="M190,209 L290,209"/><path d="M190,367 L290,265"/>
+        <path d="M490,150 L580,45"/><path d="M490,175 L580,153"/><path d="M490,240 L580,261"/><path d="M490,270 L580,369"/>
+      </g>
+      <g font-size="10.5" fill="#1d3c52" style="paint-order: stroke; stroke: #fff; stroke-width: 5px; stroke-linejoin: round;">
+        <text x="200" y="100">Fragen, Feedback</text>
+        <text x="196" y="202">Auswertung</text>
+        <text x="150" y="312">docker compose up</text>
+        <text x="468" y="98">Embeddings, Antwort</text>
+        <text x="505" y="150">Vektorsuche</text>
+        <text x="510" y="238">SQL</text>
+        <text x="492" y="330">Indexierung</text>
+      </g>
+    </svg>
+  </section>
+
+  <section class="box org">
+    <h2>Organisational Constraints</h2>
+    <p class="hint">Any organisational requirement that limits the software architect's freedom of decision.</p>
+    <ul>
+      <li>Entwicklung im Rahmen des Labors mit begrenzter Zeit (5 Sessions + Projektphase)</li>
+      <li>Team aus 2–3 Studierenden</li>
+      <li>Laborschein: jede Session und jedes Feature als GitHub-Issue auf eigenem Branch</li>
+      <li>Dokumentation: Canvas (PDF), Personas, User Stories, Quality Szenarios (Markdown)</li>
+      <li>Datenschutz der Hochschule: keine Cloud-LLMs</li>
+    </ul>
+  </section>
+
+  <section class="box qual">
+    <h2>Quality Goals</h2>
+    <p class="hint">The three most important quality goals for the most important stakeholder.</p>
+    <div class="qgoal"><span class="n">1</span><div><b>Nachvollziehbarkeit:</b> jede Antwort zeigt ihre Quellen mit Seitenzahl, ehrliches „weiß ich nicht“ (QS-01, QS-02)</div></div>
+    <div class="qgoal"><span class="n">2</span><div><b>Datenschutz:</b> alle Komponenten laufen lokal, keine Daten verlassen das Gerät (QS-03)</div></div>
+    <div class="qgoal"><span class="n">3</span><div><b>Deploybarkeit:</b> Start mit einem Befehl, Daten überstehen Neustarts (QS-04, QS-05)</div></div>
+  </section>
+
+  <section class="box tech">
+    <h2>Technical Constraints</h2>
+    <p class="hint">Any technical requirement that restricts the software architect's freedom of decision.</p>
+    <ul>
+      <li>Grundlage ist die Laborübung „Build your own Chatbot“</li>
+      <li>Hardware: NVIDIA Jetson Orin Nano (8 GB RAM, ARM) bzw. PC</li>
+      <li>Technologie: Python 3.11, Streamlit, LangChain, Ollama, ChromaDB 1.5.5, SQLite</li>
+      <li>Betrieb ausschließlich über Docker / docker-compose</li>
+      <li>Kleine lokale Modelle (llama3.2:1b, bge-m3) wegen Speicher und GPU</li>
+    </ul>
+  </section>
+</div>
+
+<div class="bottom">
+  <section class="box">
+    <h2>Architectural Hypotheses</h2>
+    <p class="hint">Resulting architectural hypotheses and important, expensive, large-scale or risky decisions, including justifications.</p>
+    <ul class="cols2">
+      <li><b>RAG statt Fine-Tuning:</b> das Buch bleibt austauschbar, Antworten sind über Quellen prüfbar, kein Training auf dem Jetson nötig.</li>
+      <li><b>Retrieval vor der Chain:</b> dieselben Chunks gehen an das LLM und an die UI → Quellen sind exakt die verwendeten.</li>
+      <li><b>SQLite statt Server-DB:</b> Chatverlauf und Feedback sind relationale Daten mit wenig Last; SQLite braucht keinen weiteren Container und liegt als Datei im Volume.</li>
+      <li><b>Drei Container (App, Ollama, ChromaDB):</b> unabhängig austauschbar, Modelle und Index bleiben in <code>container_cache</code>.</li>
+      <li><b>Deterministische Chunk-IDs:</b> erneutes Indexieren überschreibt statt zu duplizieren.</li>
+      <li><b>Konfiguration über Umgebungsvariablen:</b> Modell, Hosts und Pfade ohne Codeänderung anpassbar.</li>
+    </ul>
+  </section>
+  <section class="box">
+    <h2>Technical Challenges &amp; Risks</h2>
+    <p class="hint">Identified current known challenges and technical risks.</p>
+    <ul class="cols2">
+      <li><b>Antwortqualität des 1B-Modells</b> ist begrenzt (siehe Session 1) → Feedback sammeln, größeres Modell per <code>MODEL_NAME</code> testen.</li>
+      <li><b>Erster Start dauert lange:</b> Modell-Download und Indexierung von ca. 1.270 Chunks → Fortschritt im Log, Index bleibt im Volume.</li>
+      <li><b>Folgefragen:</b> einfache Kombination mit der Vorfrage kann das Retrieval verwässern.</li>
+      <li><b>Kontextfenster:</b> Chunks + Verlauf müssen hineinpassen → k = 3, chunk_size = 1000, 6 Verlaufsnachrichten.</li>
+      <li><b>Englisches Buch:</b> deutsche Fragen funktionieren dank multilingualem bge-m3, Antworten aber teils englisch.</li>
+      <li><b>SQLite bei vielen Nutzern</b> gleichzeitig: Schreibsperren → bei Bedarf PostgreSQL.</li>
+    </ul>
+  </section>
+</div>
+
+<footer>
+  <span>Software Architecture Canvas, © 2023 by Gernot Starke, Patrick Roos and arc42 Contributors, licensed under Attribution-ShareAlike 4.0 International.</span>
+  <span>https://canvas.arc42.org</span>
+</footer>
+</body>
+</html>
