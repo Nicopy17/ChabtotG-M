@@ -24,13 +24,19 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Initialize chatbot instance (avoid reloading)
-if "bot" not in st.session_state:
-    st.session_state["bot"] = CustomChatBot(index_data=bool(int(INDEX_DATA)), pull_embedding_model=bool(int(PULL_EMBEDDING_MODEL)))
-
 # Streamlit UI setup
 st.set_page_config(page_title="ChatDoc", page_icon="📄")
 st.header("Chat with your Document")
+
+
+@st.cache_resource(show_spinner="Loading models and preparing the knowledge base (the first start can take several minutes)...")
+def load_bot() -> CustomChatBot:
+    # cache_resource creates the bot only once per server process and shares it between all browser tabs.
+    # Otherwise every new tab would pull the models and (with INDEX_DATA=1) rebuild the index again.
+    return CustomChatBot(index_data=bool(int(INDEX_DATA)), pull_embedding_model=bool(int(PULL_EMBEDDING_MODEL)))
+
+
+st.session_state["bot"] = load_bot()
 
 # Initialize session state
 if "messages" not in st.session_state:
