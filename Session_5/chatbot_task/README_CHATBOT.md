@@ -1,5 +1,7 @@
 # Chatbot Solution
 
+> The improved version of the chatbot (sources, chat history and feedback in SQLite, automatic indexing) is described in [PROJEKT.md](../../PROJEKT.md).
+
 This project is a chatbot application designed to run on multiple platforms, including Jetson Nano, Linux, Windows, and macOS. The project includes a backend and frontend, as well as additional services like Chroma and Ollama for AI processing and management of the chatbot's tasks.
 
 Follow the instructions in  the [Task-Document](01_TASK.md).
@@ -88,11 +90,12 @@ The app reads its configuration from environment variables. For local developmen
 ```bash
 export OLLAMA_HOST_NAME=localhost
 export CHROMA_HOST_NAME=localhost
-export MODEL_NAME=llama3.2:1B
+export MODEL_NAME=llama3.2:1b
 export EMBEDDING_MODEL=bge-m3
 export PDF_DOC_PATH=src/AI_Book.pdf
-export INDEX_DATA=0          # set to 1 to re-index the PDF on startup
-export PULL_EMBEDDING_MODEL=0  # set to 1 to pull the embedding model on startup
+export INDEX_DATA=0          # set to 1 to rebuild the index on startup (an empty collection is always indexed)
+export PULL_EMBEDDING_MODEL=0  # set to 1 to pull the LLM and the embedding model on startup
+export SQLITE_DB_PATH=db/chatbot.db  # SQL database with chats, messages and feedback
 ```
 
 ### Optional launch without debugger from commandline

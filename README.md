@@ -1,5 +1,7 @@
 # Workshop: Build Your Own Chatbot
 
+> **Projekt (Laborschein):** Der weiterentwickelte Chatbot, die Projektdokumentation und die Zuordnung zu Issues und Branches sind in [PROJEKT.md](PROJEKT.md) beschrieben.
+
 **Version:** 2.0.0
 
 **Author:** Martin Kovacs 
