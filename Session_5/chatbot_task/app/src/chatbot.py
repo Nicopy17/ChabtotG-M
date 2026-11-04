@@ -5,7 +5,7 @@ from chromadb.config import DEFAULT_TENANT, DEFAULT_DATABASE, Settings
 from langchain_core.documents.base import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough, Runnable
+from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_chroma import Chroma
 from chromadb.api import ClientAPI
 from langchain_ollama import ChatOllama, OllamaEmbeddings
@@ -14,6 +14,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import requests
 import re
 from uuid import uuid5, NAMESPACE_URL
+from operator import itemgetter
 from typing import List
 import logging
 import os
@@ -39,6 +40,11 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+def page_number(doc: Document) -> int:
+    """Human readable page number (PyPDFLoader counts pages starting at 0)."""
+    return int(doc.metadata.get("page", 0)) + 1
+
 
 class CustomChatBot:
     """
@@ -209,8 +215,9 @@ Answer the following question:
         rag_prompt = ChatPromptTemplate.from_template(prompt_template)
 
         # Task: Build the RAG pipeline using the retriever and LLM
+        # The retrieval runs before the chain (see retrieve()), so the same documents can be shown as sources in the UI.
         return (
-            {"context": self.retriever | self._format_docs, "question": RunnablePassthrough()}
+            {"context": itemgetter("docs") | RunnableLambda(self._format_docs), "question": itemgetter("question")}
             | rag_prompt
             | self.llm
             | StrOutputParser()
@@ -226,21 +233,35 @@ Answer the following question:
         Returns:
             str: A string containing the concatenated content of all retrieved documents.
         """
-        return "\n\n".join(doc.page_content for doc in docs)
-        
-    async def astream(self, question: str):
+        return "\n\n".join(f"[Source {i}, page {page_number(doc)}]\n{doc.page_content}" for i, doc in enumerate(docs, start=1))
+
+    def retrieve(self, question: str) -> List[Document]:
+        """
+        Retrieve the most relevant chunks for a question from ChromaDB.
+
+        Args:
+            question (str): The user's question as a string.
+
+        Returns:
+            List[Document]: The retrieved chunks with their metadata (page number, source file).
+        """
+        logger.info(f"Retrieve documents for: {question}")
+        return self.retriever.invoke(question)
+
+    async def astream(self, question: str, docs: List[Document]):
         """
         Handle a user query asynchronously by running the question through the RAG pipeline and stream the answer.
 
         Args:
             question (str): The user's question as a string.
+            docs (List[Document]): The chunks returned by retrieve(), used as context.
 
         Yields:
             str: The generated answer from the model, streamed chunk by chunk.
         """
         logger.info("Streaming RAG chain response.")
         try:
-            async for event in self.qa_rag_chain.astream_events(question, version="v2"):
+            async for event in self.qa_rag_chain.astream_events({"question": question, "docs": docs}, version="v2"):
                 # Task: Filter stream events to get the text chunk and yield it
                 # Hint: filter for event["event"] == "on_chat_model_stream"
                 if event["event"] == "on_chat_model_stream":
