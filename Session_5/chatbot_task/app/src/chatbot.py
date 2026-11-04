@@ -15,7 +15,7 @@ import requests
 import re
 from uuid import uuid5, NAMESPACE_URL
 from operator import itemgetter
-from typing import List
+from typing import List, Optional, Tuple
 import logging
 import os
 
@@ -30,6 +30,8 @@ COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "ai_model_book")
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "100"))
 INDEX_BATCH_SIZE = 100
+# Number of previous messages that are passed to the LLM as chat history
+HISTORY_MESSAGES = int(os.environ.get("HISTORY_MESSAGES", "6"))
 
 logging.basicConfig(
     level=logging.INFO,  # Change to DEBUG for more details
@@ -202,6 +204,11 @@ class CustomChatBot:
         # Task: Define prompt
         prompt_template = """
 You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise.
+The chat history only helps you to understand follow-up questions, the facts must come from the context.
+
+<chat_history>
+{chat_history}
+</chat_history>
 
 <context>
 {context}
@@ -217,7 +224,11 @@ Answer the following question:
         # Task: Build the RAG pipeline using the retriever and LLM
         # The retrieval runs before the chain (see retrieve()), so the same documents can be shown as sources in the UI.
         return (
-            {"context": itemgetter("docs") | RunnableLambda(self._format_docs), "question": itemgetter("question")}
+            {
+                "context": itemgetter("docs") | RunnableLambda(self._format_docs),
+                "chat_history": itemgetter("history") | RunnableLambda(self._format_history),
+                "question": itemgetter("question"),
+            }
             | rag_prompt
             | self.llm
             | StrOutputParser()
@@ -235,33 +246,46 @@ Answer the following question:
         """
         return "\n\n".join(f"[Source {i}, page {page_number(doc)}]\n{doc.page_content}" for i, doc in enumerate(docs, start=1))
 
-    def retrieve(self, question: str) -> List[Document]:
+    def _format_history(self, history: List[Tuple[str, str]]) -> str:
+        """Format the last messages of the conversation as plain text for the prompt."""
+        if not history:
+            return "(no previous messages)"
+        return "\n".join(f"{role}: {content}" for role, content in history[-HISTORY_MESSAGES:])
+
+    def retrieve(self, question: str, history: Optional[List[Tuple[str, str]]] = None) -> List[Document]:
         """
         Retrieve the most relevant chunks for a question from ChromaDB.
 
+        For follow-up questions ("Which algorithms can be used there?") the question alone is a bad search query.
+        Therefore the previous user question is added to the search query.
+
         Args:
             question (str): The user's question as a string.
+            history (List[Tuple[str, str]]): Previous messages as (role, content).
 
         Returns:
             List[Document]: The retrieved chunks with their metadata (page number, source file).
         """
-        logger.info(f"Retrieve documents for: {question}")
-        return self.retriever.invoke(question)
+        previous_questions = [content for role, content in (history or []) if role == "user"]
+        search_query = f"{previous_questions[-1]}\n{question}" if previous_questions else question
+        logger.info(f"Retrieve documents for: {search_query}")
+        return self.retriever.invoke(search_query)
 
-    async def astream(self, question: str, docs: List[Document]):
+    async def astream(self, question: str, docs: List[Document], history: Optional[List[Tuple[str, str]]] = None):
         """
         Handle a user query asynchronously by running the question through the RAG pipeline and stream the answer.
 
         Args:
             question (str): The user's question as a string.
             docs (List[Document]): The chunks returned by retrieve(), used as context.
+            history (List[Tuple[str, str]]): Previous messages as (role, content).
 
         Yields:
             str: The generated answer from the model, streamed chunk by chunk.
         """
         logger.info("Streaming RAG chain response.")
         try:
-            async for event in self.qa_rag_chain.astream_events({"question": question, "docs": docs}, version="v2"):
+            async for event in self.qa_rag_chain.astream_events({"question": question, "docs": docs, "history": history or []}, version="v2"):
                 # Task: Filter stream events to get the text chunk and yield it
                 # Hint: filter for event["event"] == "on_chat_model_stream"
                 if event["event"] == "on_chat_model_stream":
