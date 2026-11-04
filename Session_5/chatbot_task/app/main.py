@@ -17,6 +17,8 @@ class ChatMessage:
     sources: list = field(default_factory=list)
     # Primary key of the message in the SQL database (None for the welcome message)
     id: int | None = None
+    # Feedback of the user: 1 = 👍, -1 = 👎, None = not rated
+    rating: int | None = None
 
 
 INDEX_DATA = os.environ.get("INDEX_DATA", "0")
@@ -71,6 +73,24 @@ def show_sources(sources: list) -> None:
             st.caption(plain_text(source["content"]))
 
 
+def save_feedback(message_id: int) -> None:
+    # st.feedback("thumbs") returns 1 for 👍, 0 for 👎 and None if the selection was removed
+    value = st.session_state[f"feedback_{message_id}"]
+    rating = None if value is None else (1 if value == 1 else -1)
+    db.set_feedback(message_id, rating)
+    logger.info(f"Saved feedback {rating} for message {message_id}")
+
+
+def show_feedback(msg: "ChatMessage") -> None:
+    """👍/👎 below every stored answer, the rating is saved in the SQL database."""
+    if msg.role != "assistant" or msg.id is None:
+        return
+    key = f"feedback_{msg.id}"
+    if key not in st.session_state:
+        st.session_state[key] = None if msg.rating is None else (1 if msg.rating == 1 else 0)
+    st.feedback("thumbs", key=key, on_change=save_feedback, args=(msg.id,))
+
+
 # ---------- Sidebar: conversations stored in the SQL database ----------
 
 if "conversation_id" not in st.session_state:
@@ -101,18 +121,32 @@ if conversations:
         st.session_state["conversation_id"] = None
         st.rerun()
 
+stats = db.feedback_stats()
+st.sidebar.divider()
+st.sidebar.subheader("⭐ Feedback")
+col_positive, col_negative = st.sidebar.columns(2)
+col_positive.metric("👍 Helpful", stats["positive"])
+col_negative.metric("👎 Not helpful", stats["negative"])
+negative = db.negative_feedback(limit=5)
+if negative:
+    with st.sidebar.expander("Last answers rated 👎"):
+        for item in negative:
+            st.markdown(f"**Q:** {item['question']}")
+            st.caption(item["answer"])
+
 # ---------- Chat ----------
 
 conversation_id = st.session_state["conversation_id"]
 messages = [ChatMessage(role="assistant", content=WELCOME_MESSAGE)]
 if conversation_id is not None:
-    messages += [ChatMessage(role=m["role"], content=m["content"], sources=m["sources"], id=m["id"]) for m in db.get_messages(conversation_id)]
+    messages += [ChatMessage(role=m["role"], content=m["content"], sources=m["sources"], id=m["id"], rating=m["rating"]) for m in db.get_messages(conversation_id)]
 
 # Display chat messages
 for msg in messages:
     with st.chat_message(msg.role):
         st.write(msg.content)
         show_sources(msg.sources)
+        show_feedback(msg)
 
 # Handle user input
 if user_query := st.chat_input(placeholder="Ask me anything!"):

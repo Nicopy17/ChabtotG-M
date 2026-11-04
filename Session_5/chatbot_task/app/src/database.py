@@ -7,6 +7,7 @@ or a restart of the container. The database file lives in a docker volume (see d
 Tables:
     conversations(id, title, created_at)
     messages(id, conversation_id, role, content, sources, created_at)
+    feedback(id, message_id, rating, created_at)
 """
 
 import json
@@ -38,6 +39,14 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+
+-- One rating per assistant answer: 1 = helpful, -1 = not helpful
+CREATE TABLE IF NOT EXISTS feedback (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id  INTEGER NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+    rating      INTEGER NOT NULL CHECK (rating IN (1, -1)),
+    created_at  TEXT    NOT NULL
+);
 """
 
 
@@ -101,7 +110,54 @@ class ChatDatabase:
 
     def get_messages(self, conversation_id: int) -> List[dict]:
         rows = self._conn.execute(
-            "SELECT id, role, content, sources, created_at FROM messages WHERE conversation_id = ? ORDER BY id",
+            """
+            SELECT m.id, m.role, m.content, m.sources, m.created_at, f.rating
+            FROM messages m
+            LEFT JOIN feedback f ON f.message_id = m.id
+            WHERE m.conversation_id = ?
+            ORDER BY m.id
+            """,
             (conversation_id,),
         ).fetchall()
         return [{**dict(row), "sources": json.loads(row["sources"])} for row in rows]
+
+    # ---------- feedback ----------
+
+    def set_feedback(self, message_id: int, rating: Optional[int]) -> None:
+        """Save the rating of an answer (1 = 👍, -1 = 👎). None removes the rating."""
+        with self._transaction() as conn:
+            if rating is None:
+                conn.execute("DELETE FROM feedback WHERE message_id = ?", (message_id,))
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO feedback (message_id, rating, created_at) VALUES (?, ?, ?)
+                    ON CONFLICT(message_id) DO UPDATE SET rating = excluded.rating, created_at = excluded.created_at
+                    """,
+                    (message_id, rating, _now()),
+                )
+
+    def feedback_stats(self) -> dict:
+        """Number of positive and negative ratings over all conversations."""
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(rating = 1), 0) AS positive, COALESCE(SUM(rating = -1), 0) AS negative FROM feedback"
+        ).fetchone()
+        return {"positive": row["positive"], "negative": row["negative"]}
+
+    def negative_feedback(self, limit: int = 20) -> List[dict]:
+        """Questions with a 👎 answer, useful to improve prompt, chunking or model."""
+        rows = self._conn.execute(
+            """
+            SELECT q.content AS question, a.content AS answer, f.created_at
+            FROM feedback f
+            JOIN messages a ON a.id = f.message_id
+            JOIN messages q ON q.id = (
+                SELECT MAX(id) FROM messages WHERE conversation_id = a.conversation_id AND role = 'user' AND id < a.id
+            )
+            WHERE f.rating = -1
+            ORDER BY f.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]

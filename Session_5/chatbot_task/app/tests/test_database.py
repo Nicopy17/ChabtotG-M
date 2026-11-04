@@ -40,3 +40,19 @@ def test_delete_conversation_deletes_messages(tmp_path):
     db.delete_conversation(conversation_id)
     assert db.list_conversations() == []
     assert db.get_messages(conversation_id) == []
+
+
+def test_feedback_is_saved_updated_and_counted(tmp_path):
+    db = make_db(tmp_path)
+    conversation_id = db.create_conversation("chat")
+    db.add_message(conversation_id, "user", "What is a perceptron?")
+    answer_id = db.add_message(conversation_id, "assistant", "A fish.")
+
+    db.set_feedback(answer_id, 1)
+    db.set_feedback(answer_id, -1)  # changing the rating replaces it
+    assert db.get_messages(conversation_id)[1]["rating"] == -1
+    assert db.feedback_stats() == {"positive": 0, "negative": 1}
+    assert db.negative_feedback()[0]["question"] == "What is a perceptron?"
+
+    db.set_feedback(answer_id, None)
+    assert db.feedback_stats() == {"positive": 0, "negative": 0}
