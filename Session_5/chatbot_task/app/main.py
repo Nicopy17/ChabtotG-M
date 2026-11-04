@@ -1,17 +1,27 @@
 import streamlit as st
 import asyncio
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
+
+from src.chatbot import CustomChatBot, page_number
+from src.database import ChatDatabase
+import os
+
 
 @dataclass
 class ChatMessage:
     role: str
     content: str
-from src.chatbot import CustomChatBot
-import os
+    # Retrieved chunks used for an assistant answer: [{"page": 12, "content": "..."}]
+    sources: list = field(default_factory=list)
+    # Primary key of the message in the SQL database (None for the welcome message)
+    id: int | None = None
+
 
 INDEX_DATA = os.environ.get("INDEX_DATA", "0")
 PULL_EMBEDDING_MODEL = os.environ.get("PULL_EMBEDDING_MODEL", "0")
+WELCOME_MESSAGE = "How can I help you?"
 
 # Configure logger
 logging.basicConfig(
@@ -36,45 +46,114 @@ def load_bot() -> CustomChatBot:
     return CustomChatBot(index_data=bool(int(INDEX_DATA)), pull_embedding_model=bool(int(PULL_EMBEDDING_MODEL)))
 
 
+@st.cache_resource
+def load_db() -> ChatDatabase:
+    return ChatDatabase()
+
+
 st.session_state["bot"] = load_bot()
+db = load_db()
 
-# Initialize session state
-if "messages" not in st.session_state:
-    st.session_state["messages"] = [ChatMessage(role="assistant", content="How can I help you?")]
 
-if len(st.session_state["messages"]) == 0 or st.sidebar.button("Clear message history"):
-    st.session_state["messages"].clear()
-    st.session_state["messages"] = [ChatMessage(role="assistant", content="How can I help you?")]
+def plain_text(text: str) -> str:
+    """Show PDF text as it is: collapse whitespace (indentation would become a code block) and escape markdown characters."""
+    text = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"([\\`*_{}\[\]()#+\-.!|>~<$])", r"\\\1", text)
+
+
+def show_sources(sources: list) -> None:
+    """Show the retrieved chunks below an answer, so the user can verify where the answer comes from."""
+    if not sources:
+        return
+    with st.expander(f"📚 Sources ({len(sources)})"):
+        for i, source in enumerate(sources, start=1):
+            st.markdown(f"**[{i}] Page {source['page']}**")
+            st.caption(plain_text(source["content"]))
+
+
+# ---------- Sidebar: conversations stored in the SQL database ----------
+
+if "conversation_id" not in st.session_state:
+    # None = new chat, it is written to the database with the first question
+    st.session_state["conversation_id"] = None
+
+st.sidebar.title("💬 Chats")
+if st.sidebar.button("➕ New chat", use_container_width=True):
+    st.session_state["conversation_id"] = None
+
+conversations = db.list_conversations()
+if conversations:
+    ids = [c["id"] for c in conversations]
+    titles = {c["id"]: c["title"] for c in conversations}
+    current = st.session_state["conversation_id"]
+    selected = st.sidebar.radio(
+        "Previous chats",
+        options=ids,
+        index=ids.index(current) if current in ids else None,
+        format_func=lambda conversation_id: titles[conversation_id],
+    )
+    if selected is not None and selected != current:
+        st.session_state["conversation_id"] = selected
+        st.rerun()
+
+    if st.session_state["conversation_id"] is not None and st.sidebar.button("🗑️ Delete this chat", use_container_width=True):
+        db.delete_conversation(st.session_state["conversation_id"])
+        st.session_state["conversation_id"] = None
+        st.rerun()
+
+# ---------- Chat ----------
+
+conversation_id = st.session_state["conversation_id"]
+messages = [ChatMessage(role="assistant", content=WELCOME_MESSAGE)]
+if conversation_id is not None:
+    messages += [ChatMessage(role=m["role"], content=m["content"], sources=m["sources"], id=m["id"]) for m in db.get_messages(conversation_id)]
 
 # Display chat messages
-for msg in st.session_state.messages:
-    st.chat_message(msg.role).write(msg.content)
+for msg in messages:
+    with st.chat_message(msg.role):
+        st.write(msg.content)
+        show_sources(msg.sources)
 
 # Handle user input
 if user_query := st.chat_input(placeholder="Ask me anything!"):
-    st.session_state.messages.append(ChatMessage(role="user", content=user_query))
-    logger.info(f"Write user message in session state {user_query}")
+    # Chat history without the welcome message, as (role, content)
+    history = [(m.role, m.content) for m in messages if m.id is not None]
+
+    if conversation_id is None:
+        title = user_query if len(user_query) <= 40 else user_query[:40] + "..."
+        conversation_id = db.create_conversation(title)
+        st.session_state["conversation_id"] = conversation_id
+
+    db.add_message(conversation_id, "user", user_query)
+    logger.info(f"Saved user message in conversation {conversation_id}: {user_query}")
     st.chat_message("user").write(user_query)
 
-    async def handle_user_query(user_query):
+    async def handle_user_query(user_query, docs, history):
         container = st.empty()
         answer = ""
         try:
-            async for chunk in st.session_state["bot"].astream(user_query):
+            async for chunk in st.session_state["bot"].astream(user_query, docs, history):
                 if chunk:
-                    answer+=chunk
+                    answer += chunk
                     container.markdown(answer)
         except Exception as e:
             logger.error(f"Error processing query: {e}")
             container.error("An error occurred while processing your request.")
-
-        # Store assistant response in session state
-        if answer:
-            logger.info(f"Write assistant message in session state {user_query}")
-            st.session_state.messages.append(ChatMessage(role="assistant", content=answer))
+        return answer
 
     with st.chat_message("assistant"):
         with st.spinner("Searching for information in your documents and generation response..."):
+            docs = st.session_state["bot"].retrieve(user_query, history)
+            sources = [{"page": page_number(doc), "content": doc.page_content} for doc in docs]
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(handle_user_query(user_query))
+            answer = loop.run_until_complete(handle_user_query(user_query, docs, history))
+        show_sources(sources)
+
+    # Store assistant response in the database
+    if answer:
+        db.add_message(conversation_id, "assistant", answer, sources)
+        logger.info(f"Saved assistant message in conversation {conversation_id}")
+
+    # Rerun so the new chat appears in the sidebar
+    st.rerun()
