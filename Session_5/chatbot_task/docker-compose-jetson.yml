@@ -54,7 +54,9 @@ services:
     container_name: ollama
     tty: true
     entrypoint: ["/bin/bash", "-c"]
-    command: ["( ollama serve & sleep 5; ollama run llama3.2:1b )"]
+    # Only start the server. The chatbot pulls the models (MODEL_NAME, EMBEDDING_MODEL) on startup,
+    # so the container keeps running even if a download fails.
+    command: ["ollama serve"]
     environment:
       - OLLAMA_KEEP_ALIVE=24h
       - OLLAMA_HOST=0.0.0.0
