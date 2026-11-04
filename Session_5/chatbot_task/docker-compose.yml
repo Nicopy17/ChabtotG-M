@@ -12,7 +12,7 @@ services:
     container_name: chatbot
     environment:
       - INDEX_DATA=0
-      - MODEL_NAME=llama3.2:1B
+      - MODEL_NAME=llama3.2:1b
       - EMBEDDING_MODEL=bge-m3
       - PULL_EMBEDDING_MODEL=0
       - OLLAMA_HOST_NAME=ollama
@@ -54,7 +54,7 @@ services:
     container_name: ollama
     tty: true
     entrypoint: ["/bin/bash", "-c"]
-    command: ["( /bin/ollama serve & sleep 5; /bin/ollama run llama3.2:1B )"]
+    command: ["( /bin/ollama serve & sleep 5; /bin/ollama run llama3.2:1b )"]
     environment:
       - OLLAMA_KEEP_ALIVE=24h
       - OLLAMA_HOST=0.0.0.0
