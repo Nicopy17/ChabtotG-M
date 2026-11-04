@@ -1,6 +1,7 @@
 import streamlit as st
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 
 from src.chatbot import CustomChatBot, page_number
@@ -45,6 +46,12 @@ def load_bot() -> CustomChatBot:
 st.session_state["bot"] = load_bot()
 
 
+def plain_text(text: str) -> str:
+    """Show PDF text as it is: collapse whitespace (indentation would become a code block) and escape markdown characters."""
+    text = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"([\\`*_{}\[\]()#+\-.!|>~<$])", r"\\\1", text)
+
+
 def show_sources(sources: list) -> None:
     """Show the retrieved chunks below an answer, so the user can verify where the answer comes from."""
     if not sources:
@@ -52,7 +59,7 @@ def show_sources(sources: list) -> None:
     with st.expander(f"📚 Sources ({len(sources)})"):
         for i, source in enumerate(sources, start=1):
             st.markdown(f"**[{i}] Page {source['page']}**")
-            st.caption(source["content"])
+            st.caption(plain_text(source["content"]))
 
 
 # Initialize session state
