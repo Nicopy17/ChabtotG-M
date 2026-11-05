@@ -17,7 +17,7 @@ dependencies = [
     "openai>=2.29.0,<3", # needed?
     "ruamel-yaml>=0.19.1,<1",
     "jupyter>=1.1.1,<2",
-    "ollama>=0.6.1,<1",
+    "ollama>=0.6.3,<1",
     "chromadb==1.5.5",
     "langchain-chroma>=1.1.0,<1.2",
     "pypdf>=6.9.1,<7",
